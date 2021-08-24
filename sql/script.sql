@@ -17,76 +17,145 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: speedtest(character varying, character varying, character varying, character varying, double precision, double precision, double precision, double precision); Type: FUNCTION; Schema: public; Owner: speedtest
+-- Name: speedtest(json); Type: FUNCTION; Schema: public; Owner: speedtest
 --
 
-CREATE FUNCTION public.speedtest(character varying, character varying, character varying, character varying, double precision, double precision, double precision, double precision) RETURNS void
+CREATE FUNCTION public.speedtest(json) RETURNS void
     LANGUAGE plpgsql
     AS $_$
 DECLARE
-    _isp ALIAS FOR $1;
-    _ip_address ALIAS FOR $2;
-    _server ALIAS FOR $3;
-    _server_location ALIAS FOR $4;
-    _server_distance_km ALIAS FOR $5;
-    _server_ping_ms ALIAS FOR $6;
-    _download_mbps ALIAS FOR $7;
-    _upload_mbps ALIAS FOR $8;
+    _json ALIAS FOR $1;
+    server_id bigint;
+    client_id integer;
 BEGIN
-    INSERT INTO speedtest_run(
-        isp,
-        ip_address,
+    --server
+    SELECT id INTO server_id FROM server WHERE id = (_json->'server' ->> 'id')::bigint;
+
+    IF NOT FOUND THEN
+        INSERT INTO server(
+            id,
+            url,
+            lat,
+            lon,
+            name,
+            country,
+            cc,
+            sponsor,
+            host,
+            d,
+            latency)
+        VALUES(
+            (_json->'server' ->> 'id')::bigint,
+            (_json->'server' ->> 'url')::character varying,
+            (_json->'server' ->> 'lat')::double precision,
+            (_json->'server' ->> 'lon')::double precision,
+            (_json->'server' ->> 'name')::character varying,
+            (_json->'server' ->> 'country')::character varying,
+            (_json->'server' ->> 'cc')::character varying,
+            (_json->'server' ->> 'sponsor')::character varying,
+            (_json->'server' ->> 'host')::character varying,
+            (_json->'server' ->> 'd')::double precision,
+            (_json->'server' ->> 'latency')::double precision);
+		SELECT id INTO server_id FROM server WHERE id = (_json->'server' ->> 'id')::bigint;	
+    ELSE
+        UPDATE server SET
+            url     = (_json->'server' ->> 'url')::character varying,
+            lat     = (_json->'server' ->> 'lat')::double precision,
+            lon     = (_json->'server' ->> 'lon')::double precision,
+            name    = (_json->'server' ->> 'name')::character varying,
+            country = (_json->'server' ->> 'country')::character varying,
+            cc      = (_json->'server' ->> 'cc')::character varying,
+            sponsor = (_json->'server' ->> 'sponsor')::character varying,
+            host    = (_json->'server' ->> 'host')::character varying,
+            d       = (_json->'server' ->> 'd')::double precision,
+            latency  = (_json->'server' ->> 'latency')::double precision,
+			date_updated = now()
+        WHERE id = server_id;
+    END IF;
+
+    -- client
+    SELECT id INTO client_id FROM client WHERE isp = _json->'client' ->> 'isp' AND country = _json->'client' ->> 'country';
+    
+    IF NOT FOUND THEN
+        INSERT INTO client(
+            id,
+            ip,
+            lat,
+            lon,
+            isp,
+            country)
+        VALUES(
+            nextval('client_id_seq'),
+            (_json->'client' ->> 'ip')::inet,
+            (_json->'client' ->> 'lat')::double precision,
+            (_json->'client' ->> 'lon')::double precision,
+            (_json->'client' ->> 'isp')::character varying,
+            (_json->'client' ->> 'country')::character varying);
+		SELECT id INTO client_id FROM client WHERE isp = _json->'client' ->> 'isp' AND country = _json->'client' ->> 'country';	
+    ELSE
+        UPDATE client SET
+            ip      = (_json->'client' ->> 'ip')::inet,
+            lat     = (_json->'client' ->> 'lat')::double precision,
+            lon     = (_json->'client' ->> 'lon')::double precision,
+            isp     = (_json->'client' ->> 'isp')::character varying,
+            country = (_json->'client' ->> 'country')::character varying,
+			date_updated = now()
+        WHERE id = client_id;
+    END IF;
+
+    -- speedtest
+    INSERT INTO speedtest(
+        id,
         server,
-        server_location,
-        server_distance_km,
-        server_ping_ms,
-        download_mbps,
-        upload_mbps
-    ) VALUES(
-        _isp,
-        _ip_address::cidr,
-        _server,
-        _server_location,
-        _server_distance_km,
-        _server_ping_ms,
-        _download_mbps,
-        _upload_mbps
-    );
+        client,
+        download,
+        upload,
+        ping,
+        bytes_sent,
+        bytes_received)
+    VALUES(
+        nextval('speedtest_id_seq'),
+        server_id,
+        client_id,
+        (_json->>'download')::double precision,
+        (_json->>'upload')::double precision,
+        (_json->>'ping')::double precision,
+        (_json->>'bytes_sent')::bigint,
+        (_json->>'bytes_received')::bigint);
+    
 END;
 $_$;
 
 
-ALTER FUNCTION public.speedtest(character varying, character varying, character varying, character varying, double precision, double precision, double precision, double precision) OWNER TO speedtest;
+ALTER FUNCTION public.speedtest(json) OWNER TO speedtest;
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: speedtest_run; Type: TABLE; Schema: public; Owner: speedtest
+-- Name: client; Type: TABLE; Schema: public; Owner: speedtest
 --
 
-CREATE TABLE public.speedtest_run (
+CREATE TABLE public.client (
     id integer NOT NULL,
+    ip inet,
+    lat double precision,
+    lon double precision,
     isp character varying,
-    ip_address cidr,
-    server_location character varying,
-    server_distance_km double precision,
-    download_mbps double precision,
-    upload_mbps double precision,
+    country character varying,
     date_added timestamp with time zone DEFAULT now(),
-    server character varying,
-    server_ping_ms double precision
+    date_updated timestamp with time zone DEFAULT now()
 );
 
 
-ALTER TABLE public.speedtest_run OWNER TO speedtest;
+ALTER TABLE public.client OWNER TO speedtest;
 
 --
--- Name: speedtest_run_id_seq; Type: SEQUENCE; Schema: public; Owner: speedtest
+-- Name: client_id_seq; Type: SEQUENCE; Schema: public; Owner: speedtest
 --
 
-CREATE SEQUENCE public.speedtest_run_id_seq
+CREATE SEQUENCE public.client_id_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -95,28 +164,183 @@ CREATE SEQUENCE public.speedtest_run_id_seq
     CACHE 1;
 
 
-ALTER TABLE public.speedtest_run_id_seq OWNER TO speedtest;
+ALTER TABLE public.client_id_seq OWNER TO speedtest;
 
 --
--- Name: speedtest_run_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: speedtest
+-- Name: client_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: speedtest
 --
 
-ALTER SEQUENCE public.speedtest_run_id_seq OWNED BY public.speedtest_run.id;
-
-
---
--- Name: speedtest_run id; Type: DEFAULT; Schema: public; Owner: speedtest
---
-
-ALTER TABLE ONLY public.speedtest_run ALTER COLUMN id SET DEFAULT nextval('public.speedtest_run_id_seq'::regclass);
+ALTER SEQUENCE public.client_id_seq OWNED BY public.client.id;
 
 
 --
--- Name: speedtest_run speedtest_run_pkey; Type: CONSTRAINT; Schema: public; Owner: speedtest
+-- Name: server; Type: TABLE; Schema: public; Owner: speedtest
 --
 
-ALTER TABLE ONLY public.speedtest_run
-    ADD CONSTRAINT speedtest_run_pkey PRIMARY KEY (id);
+CREATE TABLE public.server (
+    id bigint NOT NULL,
+    url character varying,
+    lat double precision,
+    lon double precision,
+    name character varying,
+    country character varying,
+    cc character varying,
+    sponsor character varying,
+    host character varying,
+    d double precision,
+    latency double precision,
+    date_added timestamp with time zone DEFAULT now(),
+    date_updated timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.server OWNER TO speedtest;
+
+--
+-- Name: speedtest; Type: TABLE; Schema: public; Owner: speedtest
+--
+
+CREATE TABLE public.speedtest (
+    id integer NOT NULL,
+    server bigint,
+    client integer NOT NULL,
+    download double precision,
+    upload double precision,
+    ping double precision,
+    bytes_sent bigint,
+    bytes_received bigint,
+    date_added timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.speedtest OWNER TO speedtest;
+
+--
+-- Name: speedtest_client_seq; Type: SEQUENCE; Schema: public; Owner: speedtest
+--
+
+CREATE SEQUENCE public.speedtest_client_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.speedtest_client_seq OWNER TO speedtest;
+
+--
+-- Name: speedtest_client_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: speedtest
+--
+
+ALTER SEQUENCE public.speedtest_client_seq OWNED BY public.speedtest.client;
+
+
+--
+-- Name: speedtest_id_seq; Type: SEQUENCE; Schema: public; Owner: speedtest
+--
+
+CREATE SEQUENCE public.speedtest_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.speedtest_id_seq OWNER TO speedtest;
+
+--
+-- Name: speedtest_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: speedtest
+--
+
+ALTER SEQUENCE public.speedtest_id_seq OWNED BY public.speedtest.id;
+
+
+--
+-- Name: speedtest_run; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.speedtest_run AS
+ SELECT c.isp,
+    c.ip AS client_ip,
+    (((('('::text || c.lat) || ','::text) || c.lon) || ')'::text) AS client_coord,
+    s.sponsor AS server,
+    (((('('::text || s.lat) || ','::text) || s.lon) || ')'::text) AS server_coord,
+    (((s.name)::text || ', '::text) || (s.cc)::text) AS server_loc,
+    round((s.d)::numeric, 2) AS server_distance,
+    round(((p.download / (1000000)::double precision))::numeric, 2) AS download_mbps,
+    round(((p.upload / (1000000)::double precision))::numeric, 2) AS upload_mbps,
+    round((p.ping)::numeric, 2) AS ping_ms,
+    p.date_added
+   FROM ((public.speedtest p
+     LEFT JOIN public.server s ON ((p.server = s.id)))
+     LEFT JOIN public.client c ON ((p.client = c.id)));
+
+
+ALTER TABLE public.speedtest_run OWNER TO postgres;
+
+--
+-- Name: client id; Type: DEFAULT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.client ALTER COLUMN id SET DEFAULT nextval('public.client_id_seq'::regclass);
+
+
+--
+-- Name: speedtest id; Type: DEFAULT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.speedtest ALTER COLUMN id SET DEFAULT nextval('public.speedtest_id_seq'::regclass);
+
+
+--
+-- Name: speedtest client; Type: DEFAULT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.speedtest ALTER COLUMN client SET DEFAULT nextval('public.speedtest_client_seq'::regclass);
+
+
+--
+-- Name: client client_pkey; Type: CONSTRAINT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.client
+    ADD CONSTRAINT client_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: server server_pkey; Type: CONSTRAINT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.server
+    ADD CONSTRAINT server_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: speedtest speedtest_pkey; Type: CONSTRAINT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.speedtest
+    ADD CONSTRAINT speedtest_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: speedtest client_fkey; Type: FK CONSTRAINT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.speedtest
+    ADD CONSTRAINT client_fkey FOREIGN KEY (client) REFERENCES public.client(id);
+
+
+--
+-- Name: speedtest server_fkey; Type: FK CONSTRAINT; Schema: public; Owner: speedtest
+--
+
+ALTER TABLE ONLY public.speedtest
+    ADD CONSTRAINT server_fkey FOREIGN KEY (server) REFERENCES public.server(id);
 
 
 --
